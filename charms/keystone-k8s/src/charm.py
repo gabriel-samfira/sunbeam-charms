@@ -35,14 +35,17 @@ from collections import (
 from pathlib import (
     Path,
 )
+
 from typing import (
     Dict,
     List,
 )
 from urllib.parse import (
     urlparse,
+    urljoin,
+    quote
 )
-
+from charms.hydra.v0.oauth import ClientConfig, OAuthRequirer
 import charms.keystone_k8s.v0.domain_config as sunbeam_dc_svc
 import charms.keystone_k8s.v0.identity_credentials as sunbeam_cc_svc
 import charms.keystone_k8s.v0.identity_resource as sunbeam_ops_svc
@@ -61,9 +64,19 @@ import ops_sunbeam.job_ctrl as sunbeam_job_ctrl
 import ops_sunbeam.relation_handlers as sunbeam_rhandlers
 import ops_sunbeam.tracing as sunbeam_tracing
 import pwgen
+import requests
+
+import base64
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.backends import default_backend
+import json
+
 from charms.certificate_transfer_interface.v0.certificate_transfer import (
     CertificateTransferProvides,
+    CertificateTransferRequires
 )
+
 from ops.charm import (
     ActionEvent,
     RelationChangedEvent,
@@ -93,6 +106,13 @@ CERTIFICATE_TRANSFER_LABEL = "certs_to_transfer"
 KEYSTONE_CONF = "/etc/keystone/keystone.conf"
 LOGGING_CONF = "/etc/keystone/logging.conf"
 
+OAUTH = "oauth"
+OAUTH_SCOPES = "openid email profile"
+OAUTH_GRANT_TYPES = [
+    "authorization_code",
+    "client_credentials",
+    "refresh_token"]
+
 
 @sunbeam_tracing.trace_type
 class KeystoneLoggingAdapter(sunbeam_contexts.ConfigContext):
@@ -117,6 +137,47 @@ class KeystoneLoggingAdapter(sunbeam_contexts.ConfigContext):
 
 
 @sunbeam_tracing.trace_type
+class OAuthConfigAdapter(sunbeam_contexts.ConfigContext):
+    """Config adapter for OAuth"""
+
+    def context(self):
+        oidc_secret = self.charm.get_oidc_secret()
+        if not oidc_secret:
+            return {}
+        
+        if not self.charm.can_service_requests():
+            return {}
+
+        ctxt = {
+            "oidc_crypto_passphrase": oidc_secret,
+            "oidc_providers": [],
+            "redirect_uri": self.charm.oidc_redirect_uri,
+            "redirect_uri_path": urlparse(
+                self.charm.oidc_redirect_uri).path,
+            "public_url_path": urlparse(
+                self.charm.public_endpoint).path,
+        }
+        for relation in self.charm.model.relations.get(OAUTH, []):
+            provider_info = self.charm.oauth.get_provider_info(
+                relation_id=relation.id)
+
+            if not provider_info:
+                continue
+
+            provider = {
+                "name": relation.app.name,
+                "protocol": "openid",
+                "encoded_issuer_url": quote(
+                    provider_info.issuer_url, safe=""),
+                "info": provider_info,
+            }
+            ctxt["oidc_providers"].append(provider)
+        if not ctxt["oidc_providers"]:
+            return {}
+        return ctxt
+
+
+@sunbeam_tracing.trace_type
 class KeystoneConfigAdapter(sunbeam_contexts.ConfigContext):
     """Config adapter to collect keystone config."""
 
@@ -130,7 +191,7 @@ class KeystoneConfigAdapter(sunbeam_contexts.ConfigContext):
             "service_tenant_id": self.charm.service_project_id,
             "admin_domain_name": self.charm.admin_domain_name,
             "admin_domain_id": self.charm.admin_domain_id,
-            "auth_methods": "external,password,token,oauth1,mapped,application_credential",
+            "auth_methods": "external,password,token,oauth1,openid,mapped,application_credential",
             "default_domain_id": self.charm.default_domain_id,
             "public_port": self.charm.service_port,
             "debug": config["debug"],
@@ -316,6 +377,7 @@ class KeystoneOperatorCharm(sunbeam_charm.OSBaseOperatorAPICharm):
     IDCREDS_RELATION_NAME = "identity-credentials"
     IDOPS_RELATION_NAME = "identity-ops"
     SEND_CA_CERT_RELATION_NAME = "send-ca-cert"
+    RECEIVE_CA_CERT_RELATION_NAME = "receive-ca-cert"
 
     def __init__(self, framework):
         super().__init__(framework)
@@ -330,6 +392,8 @@ class KeystoneOperatorCharm(sunbeam_charm.OSBaseOperatorAPICharm):
         self.certificate_transfer = CertificateTransferProvides(
             self, self.SEND_CA_CERT_RELATION_NAME
         )
+
+        self.oauth = OAuthRequirer(self, relation_name=OAUTH)
 
         self.framework.observe(
             self.on.peers_relation_changed, self._on_peer_data_changed
@@ -398,6 +462,105 @@ class KeystoneOperatorCharm(sunbeam_charm.OSBaseOperatorAPICharm):
             credentials_secret.grant(scope["relation"])
 
         return credentials_secret.id
+
+    @property
+    def oidc_redirect_uri(self):
+        return urljoin(
+            self.public_endpoint.rstrip("/") + "/",
+            "OS-FEDERATION/protocols/openid/redirect_uri")
+    
+    def get_ca_and_chain(self):
+        ca, chain = self._get_combined_ca_and_chain()
+        if not ca:
+            logging.info("No CA certificate found in peer data.")
+            return None
+        combined = [ca]
+        if chain:
+            combined.extend(chain)
+        return "\n".join(combined)
+
+    def _get_oidc_metadata(self, metadata_url):
+        try:
+            metadata = requests.get(metadata_url, verify=False)
+            metadata.raise_for_status()
+            return metadata.json()
+        except Exception as err:
+            logger.error(
+                f"failed to retrieve idp metadata from {metadata_url}: {err}")
+
+    def get_idp_file_name_from_issuer_url(self, issuer_url):
+        sanitized = issuer_url.lstrip(
+            "https://").lstrip(
+            "http://").rstrip("/")
+        return quote(sanitized, safe="")
+
+    def sync_oidc_providers(self):
+        files = {}
+        for relation in self.model.relations.get(OAUTH, []):
+            if self.unit.is_leader():
+                client_config = ClientConfig(
+                    self.oidc_redirect_uri,
+                    OAUTH_SCOPES,
+                    OAUTH_GRANT_TYPES)
+                self.oauth.update_client_config(
+                    client_config, relation_id=relation.id)
+
+            if not self.oauth.is_client_created(relation_id=relation.id):
+                continue
+
+            provider_info = self.oauth.get_provider_info(
+                relation_id=relation.id)
+            if not provider_info:
+                continue
+
+            logger.info(f"issuer_url is {provider_info.issuer_url}")
+            provider_metadata_url = urljoin(
+                provider_info.issuer_url.rstrip("/") + "/",
+                ".well-known/openid-configuration")
+            metadata = self._get_oidc_metadata(provider_metadata_url)
+            if not metadata:
+                continue
+
+            base_file_name = self.get_idp_file_name_from_issuer_url(
+                provider_info.issuer_url)
+            provider_file = f"{base_file_name}.provider"
+            client_file = f"{base_file_name}.client"
+
+            files[provider_file] = json.dumps(metadata, indent=2)
+            files[client_file] = json.dumps({
+                "client_id": provider_info.client_id,
+                "client_secret": provider_info.client_secret,
+            }, indent=2)
+
+        self.keystone_manager.setup_oidc_metadata_folder()
+        self.keystone_manager.write_oidc_metadata(files)
+        return True
+
+    def get_oidc_secret(self):
+        oidc_secret_id = self.peers.get_app_data("oidc-crypto-passwphrase")
+        if not oidc_secret_id and not self.unit.is_leader():
+            return
+
+        crypto_secret = None        
+        if not oidc_secret_id:
+            secret = pwgen.pwgen(32)
+            oidc_secret = self.model.app.add_secret(
+                {"oidc-crypto-passphrase": secret},
+                label="oidc-crypto-passphrase",
+                rotate=SecretRotate.NEVER,
+            )
+            self.peers.set_app_data(
+                {
+                    "oidc-crypto-passwphrase": oidc_secret.id,
+                }
+            )
+            crypto_secret = secret
+        else:
+            oidc_secret = self.model.get_secret(id=oidc_secret_id)
+            crypto_secret = oidc_secret.get_content(
+                refresh=True).get("oidc-crypto-passphrase", None)
+
+        return crypto_secret
 
     def _get_admin_password_action(self, event: ActionEvent) -> None:
         if not self.unit.is_leader():
@@ -910,12 +1073,13 @@ export OS_AUTH_VERSION=3
             [
                 KeystoneConfigAdapter(self, "ks_config"),
                 KeystoneLoggingAdapter(self, "ks_logging"),
+                OAuthConfigAdapter(self, "oauth"),
             ]
         )
         return contexts
 
     @property
-    def container_configs(self):
+    def container_configs(self) -> List[sunbeam_core.ContainerConfigFile]:
         """Container configs for keystone."""
         _cconfigs = [
             sunbeam_core.ContainerConfigFile(
@@ -927,6 +1091,14 @@ export OS_AUTH_VERSION=3
             sunbeam_core.ContainerConfigFile(
                 LOGGING_CONF,
                 "root",
+                self.service_group,
+                0o640,
+            ),
+            sunbeam_core.ContainerConfigFile(
+                # Any CA cert that also needs to be added to the system CA store
+                # must have the crt extension.
+                "/usr/local/share/ca-certificates/ca-bundle.crt",
+                self.service_user,
                 self.service_group,
                 0o640,
             ),
@@ -1029,6 +1201,14 @@ export OS_AUTH_VERSION=3
         """Remove domain files from domains no longer related."""
         active_domains = [c["domain-name"] for c in domain_configs]
         removed_domains = []
+        # These files do not belong to any domain. The keystone-combined.crt
+        # holds any CA uploaded via add-ca-certs action and the ca-bundle.crt
+        # is added by receive-ca-certs relation. Both of these get added to the
+        # system CA store in the keystone container.
+        exclude_list = [
+            "ca-bundle.crt",
+            "keystone-combined.crt",
+        ]
         for domain_file in container.list_files(self.domain_config_dir):
             domain_on_disk = domain_file.name.split(".")[1]
             if domain_on_disk in active_domains:
@@ -1038,7 +1218,8 @@ export OS_AUTH_VERSION=3
                 removed_domains.append(domain_on_disk)
         for domain_file in container.list_files(self.domain_ca_dir):
             domain_on_disk = domain_file.name.split(".")[1]
-            if domain_on_disk in active_domains:
+            if (domain_on_disk in active_domains or
+                domain_file.name in exclude_list):
                 logger.debug("Keeping CA {}".format(domain_file.name))
             else:
                 container.remove_path(domain_file.path)
@@ -1619,6 +1800,10 @@ export OS_AUTH_VERSION=3
         self.check_pebble_handlers_ready()
         pre_update_fernet_ready = self.unit_fernet_bootstrapped()
         self.update_fernet_keys_from_peer()
+        self.keystone_manager.run_cmd(
+            ["sudo", "update-ca-certificates"])
+        self.keystone_manager.write_combined_ca()
+        self.sync_oidc_providers()
         # If the wsgi service was running with no tokens it will be in a
         # wedged state so restart it.
         if self.unit_fernet_bootstrapped() and not pre_update_fernet_ready:
