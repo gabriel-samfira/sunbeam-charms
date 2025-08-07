@@ -154,7 +154,7 @@ class KeystoneConfigAdapter(sunbeam_contexts.ConfigContext):
             "service_tenant_id": self.charm.service_project_id,
             "admin_domain_name": self.charm.admin_domain_name,
             "admin_domain_id": self.charm.admin_domain_id,
-            "auth_methods": "external,password,token,oauth1,openid,mapped,application_credential",
+            "auth_methods": "external,password,token,oauth1,openid,saml2,mapped,application_credential",
             "default_domain_id": self.charm.default_domain_id,
             "public_port": self.charm.service_port,
             "debug": config["debug"],
@@ -944,6 +944,42 @@ class KeystoneOperatorCharm(sunbeam_charm.OSBaseOperatorAPICharm):
         logger.info("Writing oidc metadata files")
         self.keystone_manager.setup_oidc_metadata_folder()
         self.keystone_manager.write_oidc_metadata(files)
+
+    def _ensure_saml_cert_and_key(self) -> bool:
+        """Ensure the SAM2 SP cert and key state match the config.
+
+        If the saml-x509-keypair charm option is set, we need to ensure that
+        the secret holding the certificare and key are read, that the cert
+        matches the key and that we write it to disk. If the config is not set
+        we need to make sure we remove the cert and key.
+        """
+        self.keystone_manager.setup_saml2_metadata_folder()
+        cert_secret_id = self.model.config.get("saml-x509-keypair")
+        if not cert_secret_id:
+            self.keystone_manager.remove_saml_key_and_cert()
+            return False
+        try:
+            cert_secret = self.model.get_secret(id=cert_secret_id)
+        except SecretNotFoundError:
+            raise sunbeam_guard.BlockedExceptionError(
+                f"Could not find saml2 secret with id {cert_secret_id}"
+            )
+        cert_data = cert_secret.get_content(refresh=True)
+        key = cert_data.get("key", None)
+        cert = cert_data.get("certificate", None)
+        key_and_cert = (cert, key)
+        if any(key_and_cert) and not all(key_and_cert):
+            raise sunbeam_guard.BlockedExceptionError(
+                "Both key and certificate keys are required for "
+                "saml-x509-keypair secret."
+            )
+        if not certs.cert_and_key_match(cert.encode(), key.encode()):
+            raise sunbeam_guard.BlockedExceptionError(
+                "The supplied x509 certificate is not derived from "
+                "the supplied key."
+            )
+        self.keystone_manager.ensure_saml_cert_and_key_state(cert, key)
+        return True
 
     def get_oidc_secret(self):
         """Get the OIDC secret from the peers relation."""
@@ -2238,6 +2274,8 @@ export OS_AUTH_VERSION=3
         self.configure_containers()
         self.run_db_sync()
         self.sync_oidc_providers()
+        # TODO(gabriel-samfira): delete me once relation handler for saml is implemented
+        self._ensure_saml_cert_and_key()
         self.init_container_services()
         self.check_pebble_handlers_ready()
         pre_update_fernet_ready = self.unit_fernet_bootstrapped()

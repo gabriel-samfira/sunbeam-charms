@@ -45,6 +45,9 @@ _OIDC_METADATA_FOLDER = "/etc/apache2/oidc-metadata"
 _KEYSTONE_COMBINED_CA = (
     "/usr/local/share/ca-certificates/keystone-combined.crt"
 )
+SAML_METADATA_FOLDER = "/etc/apache2/saml2-metadata"
+SAML_KEY_PATH = f"{SAML_METADATA_FOLDER}/saml_sp_key.pem"
+SAML_CERT_PATH = f"{SAML_METADATA_FOLDER}/saml_sp_cert.pem"
 
 
 class KeystoneManager:
@@ -135,13 +138,20 @@ class KeystoneManager:
             self._credential_setup()
             self._bootstrap()
 
+    def _ensure_metadata_folder(self, pth: str) -> None:
+        self.run_cmd(["sudo", "mkdir", "-p", pth])
+        self.run_cmd(
+            ["sudo", "chown", "keystone:www-data", pth]
+        )
+        self.run_cmd(["sudo", "chmod", "550", pth])
+
     def setup_oidc_metadata_folder(self):
         """Create the OIDC metadata folder and set permissions."""
-        self.run_cmd(["sudo", "mkdir", "-p", _OIDC_METADATA_FOLDER])
-        self.run_cmd(
-            ["sudo", "chown", "keystone:www-data", _OIDC_METADATA_FOLDER]
-        )
-        self.run_cmd(["sudo", "chmod", "550", _OIDC_METADATA_FOLDER])
+        self._ensure_metadata_folder(_OIDC_METADATA_FOLDER)
+
+    def setup_saml2_metadata_folder(self):
+        """Create the SAML2 metadata folder and set permissions"""
+        self._ensure_metadata_folder(SAML_METADATA_FOLDER)
 
     def rotate_fernet_keys(self):
         """Rotate the fernet keys.
@@ -248,6 +258,31 @@ class KeystoneManager:
         for file in files:
             if file.name not in metadata:
                 container.remove_path(file.path)
+
+    def remove_saml_key_and_cert(self):
+        """Removes the SAML2 SP key and cert."""
+        self.run_cmd(["sudo", "rm", "-f", SAML_KEY_PATH])
+        self.run_cmd(["sudo", "rm", "-f", SAML_CERT_PATH])
+
+    def ensure_saml_cert_and_key_state(self, cert: str, key: str) -> None:
+        if not key or not cert:
+            raise ValueError("key and cert are mandatory")
+
+        container = self.charm.unit.get_container(self.container_name)
+        container.push(
+            SAML_KEY_PATH,
+            key,
+            user="keystone",
+            group="www-data",
+            permissions=0o440,
+        )
+        container.push(
+            SAML_CERT_PATH,
+            cert,
+            user="keystone",
+            group="www-data",
+            permissions=0o440,
+        )
 
     def read_keys(self, key_repository: str) -> Mapping[str, str]:
         """Pull the fernet keys from the on-disk repository."""

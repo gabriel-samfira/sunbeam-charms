@@ -1,0 +1,32 @@
+type: charm
+name: keystone-saml-k8s
+title: Keystone SAML
+summary: Integrator charm to enable saml2 providers in Keystone
+description: |
+  Integrator charm to enable saml2 providers in Keystone.
+
+platforms:
+  ubuntu@24.04:amd64:
+
+parts:
+  charm:
+    build-packages:
+      - git
+      - libffi-dev
+      - libssl-dev
+      - pkg-config
+    charm-binary-python-packages:
+      - cryptography
+    charm-requirements: [requirements.txt]
+
+
+config:
+  options:
+    # An example config option to customise the log level of the workload
+    log-level:
+      description: |
+        Configures the log level of gunicorn.
+
+        Acceptable values are: "info", "debug", "warning", "error" and "critical"
+      default: "info"
+      type: string
