@@ -25,7 +25,7 @@ from ops.model import Relation, TooManyRelatedAppsError
 LIBID = "0cec5003349d4cac9adeb7dfc958d097"
 
 # Increment this major API version when introducing breaking changes
-LIBAPI = 0
+LIBAPI = 1
 
 # Increment this PATCH version before using `charmcraft publish-lib` or reset
 # to 0 if you are raising the major API version
@@ -42,9 +42,7 @@ PROVIDER_JSON_SCHEMA = {
     "properties": {
         "metadata": {
             "type": "string",
-            "default": None,
-            "description": "The secret ID where we store the IDP metadata.",
-            "pattern": "^secret:"
+            "description": "The IDP metadata.",
         },
         "name": {
             "type": "string",
@@ -56,8 +54,8 @@ PROVIDER_JSON_SCHEMA = {
         },
         "chain": {
             "type": "string",
-            "description": "A secret containing a CA chain that the requirer needs in order to trust the IDP.",
-            "pattern": "^secret:",
+            "default": "",
+            "description": "A CA chain that the requirer needs in order to trust the IDP.",
         }
     },
     "required": ["metadata", "name", "label"]
@@ -205,8 +203,7 @@ class KeystoneSAMLProvider(Object):
 
     def _on_relation_broken_event(self, event: RelationBrokenEvent) -> None:
         """Handle relation broken event."""
-        logger.info("Relation broken, clearing federated providers.")
-        # TODO: Delete secret. 
+        logger.info("Relation broken, clearing keystone SP urls.")
         self.on.changed.emit(
             acs_url="", metadata_url="", logout_url=""
         )
@@ -216,13 +213,16 @@ class KeystoneSAMLProvider(Object):
             return
 
         _validate_data(info, PROVIDER_JSON_SCHEMA)
+
+        encoded = base64.b64encode(info["metadata"])
+        info["metadata"] = encoded
         for relation in self.model.relations[self._relation_name]:
             relation.data[self.model.app].update(info)
 
     @property
     def requirer_data(self) -> Mapping[str, str]:
         relation = self.model.get_relation(relation_name=self._relation_name)
-        if not relation:
+        if not relation or not relation.app:
             return {}
 
         rel_data = relation.data[relation.app]
@@ -327,7 +327,7 @@ class KeystoneSAMLRequirer(Object):
     @property
     def provider_data(self) -> Mapping[str, str]:
         relation = self.model.get_relation(relation_name=self._relation_name)
-        if not relation:
+        if not relation or not relation.app:
             return {}
 
         rel_data = relation.data[relation.app]
@@ -340,7 +340,14 @@ class KeystoneSAMLRequirer(Object):
                 PROVIDER_JSON_SCHEMA,
             )
         except DataValidationError as e:
-            logger.info(f"failed to validate relation data: {e}")
+            logger.error(f"failed to validate relation data: {e}")
+            return {}
+        
+        try:
+            decoded = base64.b64decode(data["metadata"])
+            data["metadata"] = decoded
+        except Exception as e:
+            logger.error(f"failed to decode metadata: {e}")
             return {}
 
         return data
