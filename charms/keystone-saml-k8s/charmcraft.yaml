@@ -17,6 +17,7 @@ parts:
       - pkg-config
     charm-binary-python-packages:
       - cryptography
+      - requests
     charm-requirements: [requirements.txt]
 
 config:

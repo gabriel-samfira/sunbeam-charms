@@ -23,7 +23,7 @@ from charms.keystone_saml_k8s.v1.keystone_saml import (
     KeystoneSAMLProvider,
     KeystoneSAMLProviderChangedEvent
 )
-from .certs import is_valid_chain
+from certs import is_valid_chain
 
 # Log messages can be retrieved using juju debug-log
 logger = logging.getLogger(__name__)
@@ -40,10 +40,6 @@ class KeystoneSamlK8SCharm(ops.CharmBase):
         self.framework.observe(
             self.on.config_changed,
             self._on_config_changed,
-        )
-        self.framework.observe(
-            self.on.collect_unit_status,
-            self._on_collect_status,
         )
         self.framework.observe(
             self.on.keystone_saml_relation_joined,
@@ -115,25 +111,21 @@ class KeystoneSamlK8SCharm(ops.CharmBase):
     def _on_config_changed(self, event: ops.HookEvent) -> None:
         missing = self._get_missing_config()
         if missing:
-            event.add_status(
-                ops.BlockedStatus(
-                    f"Missing required config(s): {", ".join(missing)}"
-                )
+            self.unit.status = ops.BlockedStatus(
+                f"Missing required config(s): {", ".join(missing)}"
             )
             return
 
         if not self._ensure_ca_chain_is_valid():
-            event.add_status(
-                ops.BlockedStatus("Invalid ca-chain in config")
-            )
+            self.unit.status = ops.BlockedStatus("Invalid ca-chain in config")
             return
 
         try:
             metadata = self._get_idp_metadata()
         except Exception as e:
             logger.error(f"failed to get metadata: {e}")
-            event.add_status(
-                ops.BlockedStatus("Failed to get IDP metadata")
+            self.unit.status = ops.BlockedStatus(
+                "Failed to get IDP metadata"
             )
             return
 
@@ -143,6 +135,14 @@ class KeystoneSamlK8SCharm(ops.CharmBase):
             "label": self.config["label"],
             "chain": self.config.get("ca-chain", ""),
         }
+        if not self.saml_provider.requirer_data:
+            self.unit.status = ops.WaitingStatus(
+                "Waiting for keystone to set SP URLs"
+            )
+        else:
+            self.unit.status = ops.ActiveStatus(
+                "Requirer reports that IDP is configured"
+            )
         self.saml_provider.set_provider_info(rel_data)
 
 

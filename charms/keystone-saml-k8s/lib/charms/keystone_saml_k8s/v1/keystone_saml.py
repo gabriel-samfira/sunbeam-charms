@@ -214,7 +214,7 @@ class KeystoneSAMLProvider(Object):
 
         _validate_data(info, PROVIDER_JSON_SCHEMA)
 
-        encoded = base64.b64encode(info["metadata"])
+        encoded = base64.b64encode(info["metadata"].encode())
         info["metadata"] = encoded
         for relation in self.model.relations[self._relation_name]:
             relation.data[self.model.app].update(info)
@@ -344,7 +344,7 @@ class KeystoneSAMLRequirer(Object):
             return {}
         
         try:
-            decoded = base64.b64decode(data["metadata"])
+            decoded = base64.b64decode(data["metadata"]).decode()
             data["metadata"] = decoded
         except Exception as e:
             logger.error(f"failed to decode metadata: {e}")

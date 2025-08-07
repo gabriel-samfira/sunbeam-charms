@@ -1,11 +1,16 @@
 import re
-import utils
 from typing import List
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 
 
-def parse_cert_chain(ca_chain: List[str]) -> List[x509.Certificate]:
+def parse_cert_chain(pem_data: str) -> List[x509.Certificate]:
+    ca_chain = re.findall(
+        r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----",
+        pem_data,
+        re.DOTALL
+    )
+
     parsed_certs = []
     for idx, pem_cert in enumerate(ca_chain):
         try:
@@ -23,10 +28,7 @@ def parse_cert_chain(ca_chain: List[str]) -> List[x509.Certificate]:
 
 def is_valid_chain(chain: str) -> bool:
     try:
-        cert_list = utils.parse_ca_chain(chain)
-        if not cert_list:
-            return False
-        parsed_chain = parse_cert_chain(cert_list)
+        parsed_chain = parse_cert_chain(chain)
     except ValueError:
         return False
     if not parsed_chain:
