@@ -215,9 +215,10 @@ class KeystoneSAMLProvider(Object):
         _validate_data(info, PROVIDER_JSON_SCHEMA)
 
         encoded = base64.b64encode(info["metadata"].encode())
-        info["metadata"] = encoded
+        info["metadata"] = encoded.decode()
+        rel_data = _dump_data(info, PROVIDER_JSON_SCHEMA)
         for relation in self.model.relations[self._relation_name]:
-            relation.data[self.model.app].update(info)
+            relation.data[self.model.app].update(rel_data)
 
     @property
     def requirer_data(self) -> Mapping[str, str]:
@@ -323,31 +324,46 @@ class KeystoneSAMLRequirer(Object):
             label="",
             chain="",
         )
-    
+
     @property
-    def provider_data(self) -> Mapping[str, str]:
-        relation = self.model.get_relation(relation_name=self._relation_name)
-        if not relation or not relation.app:
-            return {}
+    def relations(self) -> list[Relation]:
+        return [
+            relation
+            for relation in self._charm.model.relations[self._relation_name]
+            if relation.active
+        ]
 
-        rel_data = relation.data[relation.app]
-        if not rel_data:
-            return {}
-        
-        try:
-            data = _load_data(
-                relation.data[relation.app],
-                PROVIDER_JSON_SCHEMA,
-            )
-        except DataValidationError as e:
-            logger.error(f"failed to validate relation data: {e}")
-            return {}
-        
-        try:
-            decoded = base64.b64decode(data["metadata"]).decode()
-            data["metadata"] = decoded
-        except Exception as e:
-            logger.error(f"failed to decode metadata: {e}")
-            return {}
+    def get_providers(self) -> List[Mapping[str, str]]:
+        providers = []
+        names = []
 
-        return data
+        for relation in self.relations:
+            if not relation or not relation.app:
+                continue
+
+            rel_data = relation.data[relation.app]
+            if not rel_data:
+                continue
+            
+            try:
+                data = _load_data(
+                    relation.data[relation.app],
+                    PROVIDER_JSON_SCHEMA,
+                )
+            except DataValidationError as e:
+                logger.error(f"failed to validate relation data: {e}")
+                continue
+            
+            try:
+                decoded = base64.b64decode(data["metadata"]).decode()
+                data["metadata"] = decoded
+            except Exception as e:
+                logger.error(f"failed to decode metadata: {e}")
+                continue
+            if data["name"] in names:
+                raise ValueError(
+                    f"duplicate provider name in relation data: {data['name']}"
+                )
+            names.append(data["name"])
+            providers.append(data)
+        return providers

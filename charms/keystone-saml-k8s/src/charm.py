@@ -60,12 +60,12 @@ class KeystoneSamlK8SCharm(ops.CharmBase):
 
     def _on_saml_changed(self, event: KeystoneSAMLProviderChangedEvent) -> None:
         if not self.saml_provider.requirer_data:
-            event.add_status(
-                ops.WaitingStatus("Waiting for the requirer charm to set SP urls")
+            self.unit.status = ops.WaitingStatus(
+                "Waiting for the requirer charm to set SP urls"
             )
             return
-        event.add_status(
-            ops.ActiveStatus("Requirer reports that IDP is configured")
+        self.unit.status = ops.ActiveStatus(
+            "Requirer reports that IDP is configured"
         )
 
     def _on_get_keystone_sp_urls(self, event: ops.ActionEvent) -> None:

@@ -26,4 +26,5 @@ Listen 0.0.0.0:{{ ks_config.public_port }}
         </IfVersion>
     </Directory>
     {% include "apache2-oidc-params" %}
+    {% include "apache2-saml-params" %}
 </VirtualHost>

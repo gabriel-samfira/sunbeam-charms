@@ -193,6 +193,9 @@ requires:
   external-idp:
     interface: external_provider
     optional: true
+  keystone-saml:
+    interface: keystone_saml
+    optional: true
 
 provides:
   identity-service:

@@ -46,6 +46,7 @@ _KEYSTONE_COMBINED_CA = (
     "/usr/local/share/ca-certificates/keystone-combined.crt"
 )
 SAML_METADATA_FOLDER = "/etc/apache2/saml2-metadata"
+SAML_PROVIDER_FOLDER = f"{SAML_METADATA_FOLDER}/providers"
 SAML_KEY_PATH = f"{SAML_METADATA_FOLDER}/saml_sp_key.pem"
 SAML_CERT_PATH = f"{SAML_METADATA_FOLDER}/saml_sp_cert.pem"
 
@@ -152,6 +153,7 @@ class KeystoneManager:
     def setup_saml2_metadata_folder(self):
         """Create the SAML2 metadata folder and set permissions"""
         self._ensure_metadata_folder(SAML_METADATA_FOLDER)
+        self._ensure_metadata_folder(SAML_PROVIDER_FOLDER)
 
     def rotate_fernet_keys(self):
         """Rotate the fernet keys.
@@ -241,12 +243,13 @@ class KeystoneManager:
             )
         self.run_cmd(["sudo", "update-ca-certificates", "--fresh"])
 
-    def write_oidc_metadata(self, metadata: Mapping[str, str]) -> None:
-        """Write the OIDC metadata to the container."""
+    def _write_metadata_files(
+        self, metadata: Mapping[str, str], meta_folder: str
+    ) -> None:
         container = self.charm.unit.get_container(self.container_name)
         for filename, contents in metadata.items():
             container.push(
-                f"{_OIDC_METADATA_FOLDER}/{filename}",
+                f"{meta_folder}/{filename}",
                 contents,
                 user="keystone",
                 group="www-data",
@@ -254,10 +257,18 @@ class KeystoneManager:
             )
 
         # remove old metadata files
-        files = container.list_files(_OIDC_METADATA_FOLDER)
+        files = container.list_files(meta_folder)
         for file in files:
             if file.name not in metadata:
                 container.remove_path(file.path)
+
+    def write_oidc_metadata(self, metadata: Mapping[str, str]) -> None:
+        """Write the OIDC metadata to the container."""
+        self._write_metadata_files(metadata, _OIDC_METADATA_FOLDER)
+
+    def write_saml_metadata(self, metadata: Mapping[str, str]) -> None:
+        """Write the SAML2 metadata to the container."""
+        self._write_metadata_files(metadata, SAML_PROVIDER_FOLDER)
 
     def remove_saml_key_and_cert(self):
         """Removes the SAML2 SP key and cert."""
