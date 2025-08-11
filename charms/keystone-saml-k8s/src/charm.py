@@ -65,7 +65,7 @@ class KeystoneSamlK8SCharm(ops.CharmBase):
             )
             return
         self.unit.status = ops.ActiveStatus(
-            "Requirer reports that IDP is configured"
+            "Provider is ready"
         )
 
     def _on_get_keystone_sp_urls(self, event: ops.ActionEvent) -> None:

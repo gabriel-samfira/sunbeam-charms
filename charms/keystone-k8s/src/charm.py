@@ -183,6 +183,7 @@ class KeystoneConfigAdapter(sunbeam_contexts.ConfigContext):
             "auth_methods": "external,password,token,oauth1,openid,saml2,mapped,application_credential",
             "default_domain_id": self.charm.default_domain_id,
             "public_port": self.charm.service_port,
+            "server_name": self.charm.server_name,
             "debug": config["debug"],
             "token_expiration": 3600,  # 1 hour
             "allow_expired_window": 169200,  # 2 days - 1 hour
@@ -547,6 +548,33 @@ class KeystoneSAML2RequiresHandler(sunbeam_rhandlers.RelationHandler):
     def _saml_relation_changed(self, event):
         self.callback_f(event)
 
+    def set_requirer_info(self, event):
+        """Set SAML2 requirer info."""
+
+        providers = self.interface.get_providers()
+        if not providers:
+            return {}
+        
+        # Set provider info for all providers.
+        for provider in providers:
+            if not provider.get("name", None):
+                continue
+            relation_id = provider.pop("relation_id", None)
+            if not relation_id:
+                continue
+            sp_url = self._get_sp_url(provider)
+            acs_url = f"{sp_url}/postResponse"
+            logout_url = f"{sp_url}/logout"
+            metadata_url = f"{sp_url}/metadata"
+            self.interface.set_requirer_info(
+                {
+                    "acs-url": acs_url,
+                    "logout-url": logout_url,
+                    "metadata-url": metadata_url,
+                },
+                relation_id=relation_id,
+            )
+
     def get_saml_providers(self):
         """Get all SAML2 providers."""
         providers = self.interface.get_providers()
@@ -564,15 +592,19 @@ class KeystoneSAML2RequiresHandler(sunbeam_rhandlers.RelationHandler):
             return {}
         return {"federated-providers": data}
 
+    def _get_sp_url(self, provider: Mapping[str, str]):
+        sp_url = (f"{self.charm.public_endpoint}/OS-FEDERATION/"
+                  f"identity_providers/{provider["name"]}/protocols/"
+                  "saml2/auth/mellon")
+        return sp_url
+
     def _ensure_provider_metadata_files(
         self, provider: Mapping[str, str], sp_k_c: Mapping[str, str]
     ) -> Mapping[str, Mapping[str, str]]:
         metadata = provider.get("metadata", "")
         if not metadata:
             return {}
-        sp_url = (f"{self.charm.public_endpoint}/OS-FEDERATION/"
-                  f"identity_providers/{provider["name"]}/protocols/"
-                  "saml2/auth/mellon")
+        sp_url = self._get_sp_url(provider)
         urn = f"urn:saml2:{provider["name"]}"
         sp_meta = f"saml_{provider["name"]}_keystone_metadata.xml"
         idp_meta = f"saml_{provider["name"]}_idp_metadata.xml"
@@ -631,6 +663,7 @@ class KeystoneSAML2RequiresHandler(sunbeam_rhandlers.RelationHandler):
                 # Something went wrong. At this point we should have
                 # The needed metadata to generate the sp_metadata_file and
                 # the idp_metadata_file
+                # Note(gabriel-samfira): Should we block?
                 return {}
             
             idp_meta = meta_files["idp_metadata_file"]
@@ -1003,6 +1036,7 @@ class KeystoneOperatorCharm(sunbeam_charm.OSBaseOperatorAPICharm):
     def _handle_fid_providers_changed(self, event: RelationChangedEvent):
         """Handle federated providers info changed event."""
         self._handle_update_trusted_dashboard(event)
+        self.keystone_saml.set_requirer_info(event)
         self.configure_charm(event)
 
     def _retrieve_or_set_secret(
@@ -2273,6 +2307,25 @@ export OS_AUTH_VERSION=3
         return self.internal_endpoint
 
     @property
+    def server_name(self):
+        """ServerName directive for keystone virtual host.
+        
+        When behind a reverse proxy, apache2 may not be able to properly determine
+        the public facing protocol, hostname and port. The mod-auth-mellon plugin
+        unlike the mod-auth-openid plugin, does not implement handling for the X-Forwarded
+        header. It uses apache primitives to determine the URL it should serve, and those
+        values are taken directly from the virtual host.
+
+        To get a working setup with mellon (probably shib as well), we need to "virtualize"
+        the server name in the virtual host. In the ServerName directive we need to include
+        both the scheme and the port (if non standard).
+        """
+        if not self.ingress_public or not self.ingress_public.url:
+            return ""
+        parsed = urlparse(self.ingress_public.url)
+        return f"{parsed.scheme}://{parsed.netloc}"
+
+    @property
     def healthcheck_http_url(self) -> str:
         """Healthcheck HTTP URL for the service."""
         return f"http://localhost:{self.default_public_ingress_port}/{self.ingress_healthcheck_path}"
@@ -2456,6 +2509,7 @@ export OS_AUTH_VERSION=3
         pre_update_fernet_ready = self.unit_fernet_bootstrapped()
         self.update_fernet_keys_from_peer()
         self.keystone_manager.write_combined_ca()
+        self.keystone_saml.set_requirer_info(event)
         # If the wsgi service was running with no tokens it will be in a
         # wedged state so restart it.
         if self.unit_fernet_bootstrapped() and not pre_update_fernet_ready:

@@ -142,9 +142,9 @@ class KeystoneSAMLProviderChangedEvent(EventBase):
     def snapshot(self) -> Dict:
         """Save event."""
         return {
-            "acs_url": self.fid_providers,
-            "metadata_url": self.fid_providers,
-            "logout_url": self.fid_providers,
+            "acs_url": self.acs_url,
+            "metadata_url": self.metadata_url,
+            "logout_url": self.logout_url,
         }
 
     def restore(self, snapshot: Dict) -> None:
@@ -333,6 +333,21 @@ class KeystoneSAMLRequirer(Object):
             if relation.active
         ]
 
+    def set_requirer_info(
+        self, info: Mapping[str, str], relation_id: int
+    ) -> None:
+        if not self.model.unit.is_leader():
+            return
+
+        relation = self.model.get_relation(
+            relation_name=self._relation_name, relation_id=relation_id
+        )
+        if not relation:
+            return
+
+        rel_data = _dump_data(info, REQUIRER_JSON_SCHEMA)
+        relation.data[self.model.app].update(rel_data)
+
     def get_providers(self) -> List[Mapping[str, str]]:
         providers = []
         names = []
@@ -365,5 +380,6 @@ class KeystoneSAMLRequirer(Object):
                     f"duplicate provider name in relation data: {data['name']}"
                 )
             names.append(data["name"])
+            data["relation_id"] = relation.id
             providers.append(data)
         return providers
