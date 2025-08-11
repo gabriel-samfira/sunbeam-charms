@@ -1,8 +1,17 @@
 #!/usr/bin/env python3
-# Copyright 2025 Gabriel Adrian Samfira
-# See LICENSE file for licensing details.
+# Copyright 2025 Canonical Ltd.
 #
-# Learn more at: https://juju.is/docs/sdk
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """Charm the service.
 
@@ -14,16 +23,21 @@ https://juju.is/docs/sdk/create-a-minimal-kubernetes-charm
 
 import base64
 import logging
-import requests
 import tempfile
-from typing import List
+from typing import (
+    List,
+)
 
 import ops
+import requests
+from certs import (
+    is_valid_chain,
+    parse_cert_chain,
+)
 from charms.keystone_saml_k8s.v1.keystone_saml import (
     KeystoneSAMLProvider,
-    KeystoneSAMLProviderChangedEvent
+    KeystoneSAMLProviderChangedEvent,
 )
-from certs import is_valid_chain
 
 # Log messages can be retrieved using juju debug-log
 logger = logging.getLogger(__name__)
@@ -35,7 +49,7 @@ class KeystoneSamlK8SCharm(ops.CharmBase):
     def __init__(self, framework: ops.Framework):
         super().__init__(framework)
         self.saml_provider = KeystoneSAMLProvider(self)
-        
+
         # Lifecycle events
         self.framework.observe(
             self.on.config_changed,
@@ -58,15 +72,15 @@ class KeystoneSamlK8SCharm(ops.CharmBase):
             self._on_get_keystone_sp_urls,
         )
 
-    def _on_saml_changed(self, event: KeystoneSAMLProviderChangedEvent) -> None:
+    def _on_saml_changed(
+        self, event: KeystoneSAMLProviderChangedEvent
+    ) -> None:
         if not self.saml_provider.requirer_data:
             self.unit.status = ops.WaitingStatus(
                 "Waiting for the requirer charm to set SP urls"
             )
             return
-        self.unit.status = ops.ActiveStatus(
-            "Provider is ready"
-        )
+        self.unit.status = ops.ActiveStatus("Provider is ready")
 
     def _on_get_keystone_sp_urls(self, event: ops.ActionEvent) -> None:
         urls = self.saml_provider.requirer_data
@@ -83,14 +97,14 @@ class KeystoneSamlK8SCharm(ops.CharmBase):
             if not val:
                 missing.append(i)
         return missing
-    
+
     def _ensure_ca_chain_is_valid(self) -> bool:
         chain = self.config.get("ca-chain", "")
         if not chain:
             # not having a ca-chain is valid
             return True
         return is_valid_chain(chain)
-    
+
     def _get_idp_metadata(self) -> str:
         metadata_url = self.config.get("metadata-url", "")
         if not metadata_url:
@@ -107,7 +121,7 @@ class KeystoneSamlK8SCharm(ops.CharmBase):
             metadata = requests.get(metadata_url, verify=verify)
             metadata.raise_for_status()
         return metadata.text
-    
+
     def _on_config_changed(self, event: ops.HookEvent) -> None:
         missing = self._get_missing_config()
         if missing:
@@ -124,8 +138,18 @@ class KeystoneSamlK8SCharm(ops.CharmBase):
             metadata = self._get_idp_metadata()
         except Exception as e:
             logger.error(f"failed to get metadata: {e}")
+            self.unit.status = ops.BlockedStatus("Failed to get IDP metadata")
+            return
+
+        try:
+            ca_chain = []
+            config_chain = self.config.get("ca-chain", "")
+            if config_chain:
+                ca_chain = parse_cert_chain(base64.b64decode(config_chain))
+        except Exception as e:
+            logger.error(f"failed to parse ca chain: {e}")
             self.unit.status = ops.BlockedStatus(
-                "Failed to get IDP metadata"
+                "Failed parse configured CA chain"
             )
             return
 
@@ -133,16 +157,14 @@ class KeystoneSamlK8SCharm(ops.CharmBase):
             "metadata": metadata,
             "name": self.config["name"],
             "label": self.config["label"],
-            "chain": self.config.get("ca-chain", ""),
+            "ca_chain": ca_chain,
         }
         if not self.saml_provider.requirer_data:
             self.unit.status = ops.WaitingStatus(
                 "Waiting for keystone to set SP URLs"
             )
         else:
-            self.unit.status = ops.ActiveStatus(
-                "Requirer reports that IDP is configured"
-            )
+            self.unit.status = ops.ActiveStatus("Provider is ready")
         self.saml_provider.set_provider_info(rel_data)
 
 

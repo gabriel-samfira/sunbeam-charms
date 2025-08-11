@@ -529,10 +529,12 @@ class OAuthRequiresHandler(_BaseIDPHandler):
 
 class KeystoneSAML2RequiresHandler(sunbeam_rhandlers.RelationHandler):
     """Handler for keystone-saml relation."""
-    
+
     def setup_event_handler(self) -> ops.framework.Object:
         """Configure event handlers for the keystone-saml relation."""
-        saml = KeystoneSAMLRequirer(self.charm, relation_name=self.relation_name)
+        saml = KeystoneSAMLRequirer(
+            self.charm, relation_name=self.relation_name
+        )
 
         self.framework.observe(
             saml.on.changed,
@@ -544,17 +546,16 @@ class KeystoneSAML2RequiresHandler(sunbeam_rhandlers.RelationHandler):
             self._saml_relation_changed,
         )
         return saml
-    
+
     def _saml_relation_changed(self, event):
         self.callback_f(event)
 
     def set_requirer_info(self, event):
         """Set SAML2 requirer info."""
-
         providers = self.interface.get_providers()
         if not providers:
             return {}
-        
+
         # Set provider info for all providers.
         for provider in providers:
             if not provider.get("name", None):
@@ -593,9 +594,11 @@ class KeystoneSAML2RequiresHandler(sunbeam_rhandlers.RelationHandler):
         return {"federated-providers": data}
 
     def _get_sp_url(self, provider: Mapping[str, str]):
-        sp_url = (f"{self.charm.public_endpoint}/OS-FEDERATION/"
-                  f"identity_providers/{provider["name"]}/protocols/"
-                  "saml2/auth/mellon")
+        sp_url = (
+            f"{self.charm.public_endpoint}/OS-FEDERATION/"
+            f"identity_providers/{provider["name"]}/protocols/"
+            "saml2/auth/mellon"
+        )
         return sp_url
 
     def _ensure_provider_metadata_files(
@@ -617,7 +620,7 @@ class KeystoneSAML2RequiresHandler(sunbeam_rhandlers.RelationHandler):
         )
         if not match:
             return {}
-        
+
         groups = match.groups()
         if len(groups) != 3:
             return {}
@@ -629,14 +632,15 @@ class KeystoneSAML2RequiresHandler(sunbeam_rhandlers.RelationHandler):
                 "path": idp_file_path,
             },
             "sp_metadata_file": {
-                "data": _MELLON_SP_TEMPLATE % {
+                "data": _MELLON_SP_TEMPLATE
+                % {
                     "entity_id": urn,
                     "sp_cert": cert,
                     "base_url": sp_url,
                 },
                 "name": sp_meta,
                 "path": sp_file_path,
-            }
+            },
         }
 
     def context(self):
@@ -652,7 +656,7 @@ class KeystoneSAML2RequiresHandler(sunbeam_rhandlers.RelationHandler):
         providers = self.interface.get_providers()
         if not providers:
             return {}
-        
+
         ctx["saml_providers"] = []
         files_to_write = {}
         for provider in providers:
@@ -665,7 +669,7 @@ class KeystoneSAML2RequiresHandler(sunbeam_rhandlers.RelationHandler):
                 # the idp_metadata_file
                 # Note(gabriel-samfira): Should we block?
                 return {}
-            
+
             idp_meta = meta_files["idp_metadata_file"]
             sp_meta = meta_files["sp_metadata_file"]
             files_to_write[idp_meta["name"]] = idp_meta["data"]
@@ -1120,16 +1124,27 @@ class KeystoneOperatorCharm(sunbeam_charm.OSBaseOperatorAPICharm):
 
         return "\n".join(combined)
 
-    def get_ca_bundles_from_oauth_relations(self) -> List[str]:
+    def get_ca_bundles_from_fid_relations(self) -> List[str]:
         """Get CA bundles from oauth relations."""
         ca_certs = []
-        all_provider_info = self.oauth.get_all_provider_info()
-        for provider in all_provider_info:
-            provider_info = provider.get("info", None)
-            if not provider_info:
+        oauth_provider_info = self.oauth.get_all_provider_info()
+        external_idp_info = self.external_idp.get_all_provider_info()
+        saml_provider_info = self.keystone_saml.interface.get_providers()
+        for provider in oauth_provider_info:
+            ca_chain = provider.get("ca_chain", [])
+            if not ca_chain:
                 continue
-            if provider_info.ca_chain:
-                ca_certs.extend(provider_info.ca_chain)
+            ca_certs.extend(ca_chain)
+        for provider in external_idp_info:
+            ca_chain = provider.get("ca_chain", [])
+            if not ca_chain:
+                continue
+            ca_certs.extend(ca_chain)
+        for provider in saml_provider_info:
+            ca_chain = provider.get("ca_chain", [])
+            if not ca_chain:
+                continue
+            ca_certs.extend(ca_chain)
         return ca_certs
 
     def sync_oidc_providers(self):
@@ -2308,8 +2323,8 @@ export OS_AUTH_VERSION=3
 
     @property
     def server_name(self):
-        """ServerName directive for keystone virtual host.
-        
+        """Server name directive for keystone virtual host.
+
         When behind a reverse proxy, apache2 may not be able to properly determine
         the public facing protocol, hostname and port. The mod-auth-mellon plugin
         unlike the mod-auth-openid plugin, does not implement handling for the X-Forwarded

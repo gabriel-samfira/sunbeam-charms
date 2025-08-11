@@ -52,11 +52,14 @@ PROVIDER_JSON_SCHEMA = {
             "type": "string",
             "description": "The label which will be used in the dashboard.",
         },
-        "chain": {
-            "type": "string",
-            "default": "",
-            "description": "A CA chain that the requirer needs in order to trust the IDP.",
-        }
+        "ca_chain": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "default": [],
+            "description": "A CA chain that the requirer needs in order to trust the IDP."
+        },
     },
     "required": ["metadata", "name", "label"]
 }
@@ -311,7 +314,7 @@ class KeystoneSAMLRequirer(Object):
             metadata=data["metadata"],
             name=data["name"],
             label=data["label"],
-            chain=data.get("chain", ""),
+            ca_chain=data.get("ca_chain", []),
         )
     
     def _on_relation_broken_event(self, event: RelationBrokenEvent) -> None:
@@ -322,7 +325,7 @@ class KeystoneSAMLRequirer(Object):
             metadata="",
             name="",
             label="",
-            chain="",
+            ca_chain=[],
         )
 
     @property

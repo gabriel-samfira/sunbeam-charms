@@ -141,9 +141,7 @@ class KeystoneManager:
 
     def _ensure_metadata_folder(self, pth: str) -> None:
         self.run_cmd(["sudo", "mkdir", "-p", pth])
-        self.run_cmd(
-            ["sudo", "chown", "keystone:www-data", pth]
-        )
+        self.run_cmd(["sudo", "chown", "keystone:www-data", pth])
         self.run_cmd(["sudo", "chmod", "550", pth])
 
     def setup_oidc_metadata_folder(self):
@@ -151,7 +149,7 @@ class KeystoneManager:
         self._ensure_metadata_folder(_OIDC_METADATA_FOLDER)
 
     def setup_saml2_metadata_folder(self):
-        """Create the SAML2 metadata folder and set permissions"""
+        """Create the SAML2 metadata folder and set permissions."""
         self._ensure_metadata_folder(SAML_METADATA_FOLDER)
         self._ensure_metadata_folder(SAML_PROVIDER_FOLDER)
 
@@ -217,7 +215,7 @@ class KeystoneManager:
     def write_combined_ca(self) -> None:
         """Write the combined CA to the container."""
         ca_contents = self.charm.get_ca_and_chain()
-        oauth_ca_certs = self.charm.get_ca_bundles_from_oauth_relations()
+        oauth_ca_certs = self.charm.get_ca_bundles_from_fid_relations()
         container = self.charm.unit.get_container(self.container_name)
         if not ca_contents and not oauth_ca_certs:
             logger.debug(
@@ -276,6 +274,7 @@ class KeystoneManager:
         self.run_cmd(["sudo", "rm", "-f", SAML_CERT_PATH])
 
     def ensure_saml_cert_and_key_state(self, cert: str, key: str) -> None:
+        """Ensure that the SAML cert and key are written to disk."""
         if not key or not cert:
             raise ValueError("key and cert are mandatory")
 
