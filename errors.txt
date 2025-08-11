@@ -1,0 +1,102 @@
+--- /home/gabriel/work/canonical/sunbeam/sunbeam-charms/charms/keystone-saml-k8s/tests/unit/test_keystone_saml_charm.py 2025-08-11 18:52:50.276098+00:00
++++ /home/gabriel/work/canonical/sunbeam/sunbeam-charms/charms/keystone-saml-k8s/tests/unit/test_keystone_saml_charm.py 2025-08-11 18:53:13.262993+00:00
+@@ -86,11 +86,12 @@
+         # Should be waiting for keystone
+         self.assertIsInstance(
+             self.harness.charm.unit.status, charm.ops.WaitingStatus
+         )
+         self.assertIn(
+-            "Waiting for keystone", str(self.harness.charm.unit.status.message),
++            "Waiting for keystone",
++            str(self.harness.charm.unit.status.message),
+         )
+ 
+         # Verify metadata was fetched
+         mock_get.assert_called_once_with(
+             "https://example.com/metadata", verify=True
+@@ -132,11 +133,12 @@
+         # Should be active
+         self.assertIsInstance(
+             self.harness.charm.unit.status, charm.ops.ActiveStatus
+         )
+         self.assertEqual(
+-            "Provider is ready", str(self.harness.charm.unit.status.message),
++            "Provider is ready",
++            str(self.harness.charm.unit.status.message),
+         )
+ 
+     @mock.patch("charm.is_valid_chain")
+     def test_invalid_ca_chain(self, mock_is_valid):
+         """Test charm with invalid CA chain."""
+@@ -156,11 +158,12 @@
+         # Should be blocked due to invalid CA chain
+         self.assertIsInstance(
+             self.harness.charm.unit.status, charm.ops.BlockedStatus
+         )
+         self.assertEqual(
+-            "Invalid ca-chain in config", str(self.harness.charm.unit.status.message),
++            "Invalid ca-chain in config",
++            str(self.harness.charm.unit.status.message),
+         )
+ 
+     @mock.patch("charm.requests.get")
+     @mock.patch("charm.is_valid_chain")
+     def test_metadata_fetch_error(self, mock_is_valid, mock_get):
+@@ -181,11 +184,12 @@
+         # Should be blocked due to metadata fetch error
+         self.assertIsInstance(
+             self.harness.charm.unit.status, charm.ops.BlockedStatus
+         )
+         self.assertEqual(
+-            "Failed to get IDP metadata", str(self.harness.charm.unit.status.message),
++            "Failed to get IDP metadata",
++            str(self.harness.charm.unit.status.message),
+         )
+ 
+     def test_get_keystone_sp_urls_action_no_urls(self):
+         """Test get-keystone-sp-urls action without URLs."""
+         self.harness.set_leader()
+@@ -246,16 +250,18 @@
+         # Create base64 encoded CA chain (using test certificate)
+         ca_chain_bytes = test_utils.TEST_CA.encode()
+         ca_chain_b64 = base64.b64encode(ca_chain_bytes).decode()
+ 
+         # Set configuration with CA chain
+-        self.harness.update_config({
+-            "name": "test-provider",
+-            "label": "Test Provider",
+-            "metadata-url": "https://example.com/metadata",
+-            "ca-chain": ca_chain_b64
+-        })
+would reformat /home/gabriel/work/canonical/sunbeam/sunbeam-charms/charms/keystone-saml-k8s/tests/unit/test_keystone_saml_charm.py
++        self.harness.update_config(
++            {
++                "name": "test-provider",
++                "label": "Test Provider",
++                "metadata-url": "https://example.com/metadata",
++                "ca-chain": ca_chain_b64,
++            }
++        )
+ 
+         # Verify relation data was set with parsed CA chain
+         rel_data = self.harness.get_relation_data(
+             rel_id, self.harness.charm.app.name
+         )
+@@ -345,7 +351,8 @@
+         # Should be blocked due to CA chain parse error
+         self.assertIsInstance(
+             self.harness.charm.unit.status, charm.ops.BlockedStatus
+         )
+         self.assertEqual(
+-            "Failed parse configured CA chain", str(self.harness.charm.unit.status.message),
+-        )
++            "Failed parse configured CA chain",
++            str(self.harness.charm.unit.status.message),
++        )
+
+Oh no! 💥 💔 💥
+1 file would be reformatted, 148 files would be left unchanged.
++ exit 1
+pep8: exit 1 (6.53 seconds) /home/gabriel/work/canonical/sunbeam/sunbeam-charms> run_tox.sh pep8 pid=382087
+  pep8: FAIL code 1 (6.62=setup[0.09]+cmd[6.53] seconds)
+  evaluation failed :( (6.77 seconds)

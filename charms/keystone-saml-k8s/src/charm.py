@@ -126,7 +126,7 @@ class KeystoneSamlK8SCharm(ops.CharmBase):
         missing = self._get_missing_config()
         if missing:
             self.unit.status = ops.BlockedStatus(
-                f"Missing required config(s): {", ".join(missing)}"
+                f"Missing required config(s): {', '.join(missing)}"
             )
             return
 
@@ -145,7 +145,9 @@ class KeystoneSamlK8SCharm(ops.CharmBase):
             ca_chain = []
             config_chain = self.config.get("ca-chain", "")
             if config_chain:
-                ca_chain = parse_cert_chain(base64.b64decode(config_chain))
+                ca_chain = parse_cert_chain(
+                    base64.b64decode(config_chain).decode()
+                )
         except Exception as e:
             logger.error(f"failed to parse ca chain: {e}")
             self.unit.status = ops.BlockedStatus(

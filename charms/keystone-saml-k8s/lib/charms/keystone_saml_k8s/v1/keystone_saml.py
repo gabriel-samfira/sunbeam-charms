@@ -61,6 +61,7 @@ PROVIDER_JSON_SCHEMA = {
             "description": "A CA chain that the requirer needs in order to trust the IDP."
         },
     },
+    "additionalProperties": False,
     "required": ["metadata", "name", "label"]
 }
 
@@ -78,8 +79,9 @@ REQUIRER_JSON_SCHEMA = {
         "metadata-url": {
             "type": "string",
             "description": "The metadata URL for the keystone SP."
-        }
+        },
     },
+    "additionalProperties": False,
     "required": ["acs-url", "logout-url", "metadata-url"]
 }
 
